@@ -66,16 +66,19 @@ button.ghost{background:transparent;color:var(--on-surface-v);padding:9px 14px}
 .tag{font-size:12px;color:var(--on-surface-v);text-transform:uppercase;letter-spacing:.6px}
 
 /* ===== UNO ===== */
-.table{
-  flex:1;display:flex;flex-direction:column;gap:10px;min-height:0;
+.table{flex:1;display:flex;flex-direction:column;gap:10px;min-height:0}
+.opp-hand{
+  display:flex;justify-content:center;align-items:center;gap:0;
+  padding:6px 0;min-height:56px;overflow-x:auto;scrollbar-width:none;
 }
-.opp-hand{display:flex;justify-content:center;align-items:center;gap:6px;padding:6px 0;min-height:56px}
+.opp-hand::-webkit-scrollbar{display:none}
 .cardback{
   width:30px;height:46px;border-radius:8px;
   background:linear-gradient(135deg,#4a3f63,#2f2743);
   box-shadow:0 2px 4px var(--shadow);flex:none;
 }
-.cardback.sm{width:22px;height:34px;border-radius:6px;margin-left:-12px}
+.cardback.sm{width:26px;height:40px;border-radius:6px;margin-left:-14px}
+.cardback.sm:first-child{margin-left:0}
 .center-pile{display:flex;justify-content:center;align-items:center;gap:24px;padding:14px 0}
 .pile{display:flex;flex-direction:column;align-items:center;gap:6px}
 .pile .label{font-size:11px;color:var(--on-surface-v);text-transform:uppercase;letter-spacing:.6px}
@@ -164,6 +167,7 @@ button.ghost{background:transparent;color:var(--on-surface-v);padding:9px 14px}
 }
 .sq .pc.b.king::after{color:#E8C766}
 .sq.sel .pc{transform:scale(1.08);box-shadow:0 0 0 3px var(--primary),0 3px 8px rgba(0,0,0,.35)}
+.sq.chain .pc{box-shadow:0 0 0 3px #D9A400,0 3px 8px rgba(0,0,0,.35)}
 .sq.target::before{
   content:'';position:absolute;width:32%;height:32%;border-radius:50%;
   background:rgba(103,80,164,.55);
@@ -181,7 +185,7 @@ button.ghost{background:transparent;color:var(--on-surface-v);padding:9px 14px}
   position:fixed;left:50%;bottom:24px;transform:translateX(-50%);
   background:#322F35;color:#F5EFF7;padding:12px 20px;border-radius:14px;
   font-size:14px;z-index:100;box-shadow:0 4px 12px var(--shadow);
-  animation:pop .25s ease;
+  animation:pop .25s ease;max-width:90vw;text-align:center;
 }
 @keyframes pop{from{opacity:0;transform:translate(-50%,10px)}to{opacity:1;transform:translate(-50%,0)}}
 .waiting{display:flex;flex-direction:column;align-items:center;gap:14px;padding:40px 20px;text-align:center}
@@ -253,7 +257,7 @@ button.ghost{background:transparent;color:var(--on-surface-v);padding:9px 14px}
 <script src="https://www.gstatic.com/firebasejs/10.12.0/firebase-database-compat.js"></script>
 <script>
 /* ============================================================
-   1. FIREBASE CONFIG — ваш проект
+   FIREBASE CONFIG
    ============================================================ */
 const firebaseConfig = {
   apiKey: "AIzaSyCGiD0Yte1ZhGDb5BlVYYU40fE3p8Y1aI0",
@@ -268,7 +272,7 @@ firebase.initializeApp(firebaseConfig);
 const db = firebase.database();
 
 /* ============================================================
-   2. Утилиты
+   Утилиты
    ============================================================ */
 const $ = s => document.querySelector(s);
 const $$ = s => [...document.querySelectorAll(s)];
@@ -286,24 +290,24 @@ function shuffle(a){
 }
 const clone = o => JSON.parse(JSON.stringify(o));
 
-/* ID игрока */
 let myId = localStorage.getItem('pid');
 if(!myId){ myId = 'p_'+Math.random().toString(36).slice(2,10); localStorage.setItem('pid', myId); }
 let myName = localStorage.getItem('pname') || '';
 if(myName) $('#nameInput').value = myName;
 
 /* ============================================================
-   3. Состояние
+   Состояние клиента
    ============================================================ */
 let roomId = null;
 let mySeat = null;
 let roomRef = null;
 let room = null;
-let sel = null;
-let lastMove = null;
+let sel = null;                 // выделенная шашка [r,c]
+let lastMove = null;            // {from,to} для подсветки
+let initingState = false;       // защита от повторной инициализации
 
 /* ============================================================
-   4. ЛОББИ
+   ЛОББИ
    ============================================================ */
 $$('[data-create]').forEach(btn => {
   btn.onclick = () => {
@@ -340,15 +344,12 @@ async function createRoom(game){
   }
   if(!code){ toast('Ошибка, попробуйте снова'); return; }
 
-  const data = {
+  await db.ref('rooms/'+code).set({
     game,
     status: 'waiting',
     createdAt: Date.now(),
-    players: {
-      p0: { uid: myId, name: myName }
-    }
-  };
-  await db.ref('rooms/'+code).set(data);
+    players: { p0: { uid: myId, name: myName } }
+  });
   enterRoom(code, 'p0');
 }
 
@@ -370,6 +371,7 @@ function enterRoom(code, seat){
   roomId = code;
   mySeat = seat;
   roomRef = db.ref('rooms/'+code);
+  initingState = false;
   $('#lobby').classList.add('hidden');
   $('#room').classList.remove('hidden');
   $('#roomChip').textContent = code;
@@ -384,7 +386,7 @@ function enterRoom(code, seat){
 function leaveRoom(){
   if(roomRef) roomRef.off();
   roomId = null; mySeat = null; room = null; roomRef = null;
-  sel = null; lastMove = null;
+  sel = null; lastMove = null; initingState = false;
   $('#room').classList.add('hidden');
   $('#lobby').classList.remove('hidden');
   $('#waiting').classList.remove('hidden');
@@ -401,7 +403,7 @@ $('#roomChip').onclick = () => {
 };
 
 /* ============================================================
-   5. РЕНДЕР
+   РЕНДЕР
    ============================================================ */
 function render(){
   if(!room) return;
@@ -419,11 +421,15 @@ function render(){
   }
 
   if(!hasState){
-    if(mySeat === 'p0') initGameState();
+    if(mySeat === 'p0' && !initingState){
+      initingState = true;
+      initGameState(room.game);
+    }
     $('#waiting').classList.remove('hidden');
     $('#gameArea').classList.add('hidden');
     return;
   }
+  initingState = false;
 
   $('#waiting').classList.add('hidden');
   $('#gameArea').classList.remove('hidden');
@@ -433,27 +439,33 @@ function render(){
 }
 
 /* ============================================================
-   6. ТРАНЗАКЦИЯ
+   ТРАНЗАКЦИЯ СОСТОЯНИЯ (атомарная, безопасная при гонках)
    ============================================================ */
 async function updateState(mutator){
   const ref = roomRef.child('state');
-  await ref.transaction(cur => {
-    if(!cur) return cur;
+  const res = await ref.transaction(cur => {
+    if(!cur) return;                     // нет состояния — отменяем
     const next = mutator(clone(cur));
-    if(next === undefined || next === null) return;
+    if(next === undefined) return;       // отмена (правило вернуло undefined)
     return next;
   });
+  return res.committed;
 }
 
 /* ============================================================
-   7. ИНИЦИАЛИЗАЦИЯ
+   ИНИЦИАЛИЗАЦИЯ ЧЕРЕЗ TRANSACTION — чтобы только один клиент записал
    ============================================================ */
-function initGameState(){
-  if(room.game === 'uno') roomRef.child('state').set(makeUnoState());
-  else roomRef.child('state').set(makeCheckersState());
+function initGameState(game){
+  const ref = roomRef.child('state');
+  ref.transaction(cur => {
+    if(cur) return;                      // уже инициализировано — отмена
+    return game === 'uno' ? makeUnoState() : makeCheckersState();
+  }).then(() => { initingState = false; });
 }
 
-/* ---------------- УНО ---------------- */
+/* ============================================================
+   УНО
+   ============================================================ */
 function buildUnoDeck(){
   const colors = ['red','yellow','green','blue'];
   const deck = [];
@@ -491,11 +503,12 @@ function makeUnoState(){
     hasDrawn: false,
     drawnCardId: null,
     winner: null,
-    log: 'Игра началась!'
+    log: 'Игра началась! Ходит ' + nameOf('p0')
   };
 }
 
 function canPlayUno(card, top, currentColor){
+  if(!card || !top) return false;
   if(card.color === 'wild') return true;
   if(card.color === currentColor) return true;
   if(top.color !== 'wild' && card.value === top.value) return true;
@@ -506,11 +519,24 @@ const unoLabel = v => ({
   'skip':'⊘','reverse':'⇄','draw2':'+2','wild':'★','draw4':'+4'
 }[v] || v);
 
+function unoEffectText(card, seat, opp){
+  const me = nameOf(seat), op = nameOf(opp);
+  switch(card.value){
+    case 'skip':    return `${me} сыграл ⊘ — ${op} пропускает ход`;
+    case 'reverse': return `${me} сыграл ⇄ — ${op} пропускает ход`;
+    case 'draw2':   return `${me} сыграл +2 — ${op} берёт 2 карты и пропускает`;
+    case 'draw4':   return `${me} сыграл +4 — ${op} берёт 4 карты и пропускает`;
+    default:        return `${me} сыграл ${unoLabel(card.value)}`;
+  }
+}
+
+/* Сыграть карту */
 function playUnoCard(cardId, chosenColor){
   updateState(s => {
     if(s.winner) return;
     if(s.turn !== mySeat) return;
     const hand = s.hands[mySeat];
+    if(!hand) return;
     const idx = hand.findIndex(c => c.id === cardId);
     if(idx < 0) return;
     const card = hand[idx];
@@ -531,7 +557,6 @@ function playUnoCard(cardId, chosenColor){
       s.deck = shuffle(s.discard);
       s.discard = [t];
     };
-
     const drawN = n => {
       for(let i=0;i<n;i++){
         ensureDeck();
@@ -547,10 +572,14 @@ function playUnoCard(cardId, chosenColor){
     }
 
     let again = false;
-    if(card.value === 'skip' || card.value === 'reverse'){ again = true; s.log = `${nameOf(mySeat)}: пропуск хода`; }
-    else if(card.value === 'draw2'){ drawN(2); again = true; s.log = `${nameOf(mySeat)}: +2 карты`; }
-    else if(card.value === 'draw4'){ drawN(4); again = true; s.log = `${nameOf(mySeat)}: +4 карты`; }
-    else { s.log = `${nameOf(mySeat)} сыграл ${unoLabel(card.value)}`; }
+    if(card.value === 'skip' || card.value === 'reverse'){
+      again = true;
+    } else if(card.value === 'draw2'){
+      drawN(2); again = true;
+    } else if(card.value === 'draw4'){
+      drawN(4); again = true;
+    }
+    s.log = unoEffectText(card, mySeat, opp);
 
     if(s.hands[mySeat].length === 0){
       s.winner = mySeat;
@@ -563,6 +592,7 @@ function playUnoCard(cardId, chosenColor){
   });
 }
 
+/* Взять карту */
 function drawUnoCard(){
   updateState(s => {
     if(s.winner) return;
@@ -570,11 +600,16 @@ function drawUnoCard(){
     if(s.hasDrawn) return;
 
     if(s.deck.length === 0){
-      if(s.discard.length <= 1) return;
+      if(s.discard.length <= 1){
+        s.log = 'Колода пуста — пропуск';
+        s.turn = mySeat === 'p0' ? 'p1' : 'p0';
+        return s;
+      }
       const t = s.discard.pop();
       s.deck = shuffle(s.discard);
       s.discard = [t];
     }
+
     const card = s.deck.pop();
     s.hands[mySeat].push(card);
 
@@ -587,398 +622,4 @@ function drawUnoCard(){
       s.hasDrawn = false;
       s.drawnCardId = null;
       s.turn = mySeat === 'p0' ? 'p1' : 'p0';
-      s.log = `${nameOf(mySeat)} взял карту и пропустил`;
-    }
-    return s;
-  });
-}
-
-function passUno(){
-  updateState(s => {
-    if(s.winner) return;
-    if(s.turn !== mySeat) return;
-    if(!s.hasDrawn) return;
-    s.hasDrawn = false; s.drawnCardId = null;
-    s.turn = mySeat === 'p0' ? 'p1' : 'p0';
-    s.log = `${nameOf(mySeat)} пропустил ход`;
-    return s;
-  });
-}
-
-function nameOf(seat){
-  if(!room?.players?.[seat]) return '—';
-  return room.players[seat].uid === myId ? 'Вы' : room.players[seat].name;
-}
-
-function renderUno(){
-  const s = room.state;
-  const myHand = s.hands[mySeat] || [];
-  const oppSeat = mySeat === 'p0' ? 'p1' : 'p0';
-  const oppHand = s.hands[oppSeat] || [];
-  const top = s.discard[s.discard.length-1];
-  const myTurn = s.turn === mySeat && !s.winner;
-
-  const st = $('#status');
-  if(s.winner){
-    st.innerHTML = `<b>${nameOf(s.winner)} победил! 🎉</b>`;
-  } else {
-    st.innerHTML = myTurn
-      ? `<span class="you">Ваш ход</span>`
-      : `Ход: <b>${nameOf(s.turn)}</b>`;
-  }
-
-  const board = $('#boardArea');
-  board.innerHTML = `
-    <div class="table">
-      <div class="opp-hand">
-        ${oppHand.map((_,i)=>`<div class="cardback sm" style="margin-left:${i===0?0:-14}px"></div>`).join('')}
-      </div>
-      <div class="center-pile">
-        <div class="pile" id="deckPile">
-          <div class="cardback" style="width:76px;height:114px;border-radius:14px"></div>
-          <div class="label">Колода · ${s.deck.length}</div>
-        </div>
-        <div class="pile">
-          ${unoCardHTML(top, s.currentColor, true)}
-          <div class="label">Сброс</div>
-        </div>
-      </div>
-      <div class="banner ${myTurn?'':'warn'}" style="margin-top:4px">${s.log || ''}</div>
-    </div>
-  `;
-
-  const hand = $('#handArea');
-  hand.innerHTML = `<div class="hand">${myHand.map(c => {
-    const ok = myTurn && canPlayUno(c, top, s.currentColor) && (!s.hasDrawn || s.drawnCardId === c.id);
-    return unoCardHTML(c, s.currentColor, false, ok);
-  }).join('')}</div>`;
-
-  const act = $('#actionArea');
-  act.innerHTML = '';
-  if(myTurn && !s.hasDrawn){
-    const b = document.createElement('button');
-    b.textContent = 'Взять карту';
-    b.className = 'tonal';
-    b.onclick = drawUnoCard;
-    act.appendChild(b);
-  }
-  if(myTurn && s.hasDrawn){
-    const b = document.createElement('button');
-    b.textContent = 'Пропустить';
-    b.className = 'outline';
-    b.onclick = passUno;
-    act.appendChild(b);
-  }
-  if(s.winner){
-    const b = document.createElement('button');
-    b.textContent = 'Выйти';
-    b.onclick = leaveRoom;
-    act.appendChild(b);
-  }
-
-  hand.querySelectorAll('.uno-card.playable').forEach(el => {
-    el.onclick = () => {
-      const id = +el.dataset.id;
-      const card = myHand.find(c => c.id === id);
-      if(!card) return;
-      if(card.color === 'wild') showColorPicker(col => playUnoCard(id, col));
-      else playUnoCard(id);
-    };
-  });
-
-  const dp = $('#deckPile');
-  if(dp && myTurn && !s.hasDrawn){ dp.style.cursor='pointer'; dp.onclick = drawUnoCard; }
-}
-
-function unoCardHTML(card, currentColor, isTop, playable){
-  const cls = ['uno-card', card.color];
-  if(!isTop) cls.push(playable ? 'playable' : 'dim');
-  const label = unoLabel(card.value);
-  const isWild = card.color === 'wild';
-  const dot = (isTop && isWild) ? `<div class="color-dot" style="background:${
-    {red:'#C5504A',yellow:'#D9A400',green:'#4E8C6A',blue:'#4A7BB5'}[currentColor] || '#888'
-  }"></div>` : '';
-  return `<div class="${cls.join(' ')}" data-id="${card.id}">
-    ${dot}
-    <span class="tl">${isWild ? '★' : label}</span>
-    <span class="mid">${label}</span>
-    <span class="br">${isWild ? '★' : label}</span>
-  </div>`;
-}
-
-function showColorPicker(cb){
-  const wrap = document.createElement('div');
-  wrap.className = 'color-picker';
-  wrap.innerHTML = `
-    <div class="box">
-      <h2>Выберите цвет</h2>
-      <div class="grid">
-        <button class="sw" style="background:#C5504A" data-c="red"></button>
-        <button class="sw" style="background:#D9A400" data-c="yellow"></button>
-        <button class="sw" style="background:#4E8C6A" data-c="green"></button>
-        <button class="sw" style="background:#4A7BB5" data-c="blue"></button>
-      </div>
-    </div>`;
-  document.body.appendChild(wrap);
-  wrap.querySelectorAll('.sw').forEach(b => {
-    b.onclick = () => { wrap.remove(); cb(b.dataset.c); };
-  });
-  wrap.onclick = e => { if(e.target === wrap) wrap.remove(); };
-}
-
-/* ---------------- ШАШКИ ---------------- */
-const inB = (r,c) => r>=0 && r<8 && c>=0 && c<8;
-
-function makeCheckersState(){
-  const board = Array.from({length:8}, () => Array(8).fill(null));
-  for(let r=0;r<8;r++) for(let c=0;c<8;c++){
-    if((r+c)%2 === 1){
-      if(r < 3) board[r][c] = 'b';
-      else if(r > 4) board[r][c] = 'w';
-    }
-  }
-  return {
-    board,
-    turn: 'w',
-    chainFrom: null,
-    winner: null,
-    lastMove: null,
-    log: 'Белые начинают. Бить обязательно!'
-  };
-}
-
-function getCapturesForPiece(board, r, c){
-  const piece = board[r][c];
-  if(!piece) return [];
-  const color = piece.toLowerCase();
-  const isKing = piece === piece.toUpperCase();
-  const res = [];
-  const dirs = [[-1,-1],[-1,1],[1,-1],[1,1]];
-
-  for(const [dr,dc] of dirs){
-    if(isKing){
-      let i = r+dr, j = c+dc;
-      while(inB(i,j) && !board[i][j]){ i+=dr; j+=dc; }
-      if(!inB(i,j)) continue;
-      if(board[i][j].toLowerCase() === color) continue;
-      let li = i+dr, lj = j+dc;
-      while(inB(li,lj) && !board[li][lj]){
-        res.push({from:[r,c], to:[li,lj], captured:[i,j]});
-        li+=dr; lj+=dc;
-      }
-    } else {
-      const i = r+dr, j = c+dc;
-      const li = r+2*dr, lj = c+2*dc;
-      if(inB(i,j) && inB(li,lj) && board[i][j] && board[i][j].toLowerCase() !== color && !board[li][lj]){
-        res.push({from:[r,c], to:[li,lj], captured:[i,j]});
-      }
-    }
-  }
-  return res;
-}
-
-function getAllMoves(board, color){
-  const caps = [], normals = [];
-  for(let r=0;r<8;r++) for(let c=0;c<8;c++){
-    const p = board[r][c];
-    if(!p || p.toLowerCase() !== color) continue;
-    const cs = getCapturesForPiece(board, r, c);
-    if(cs.length){ caps.push(...cs); continue; }
-
-    const isKing = p === p.toUpperCase();
-    const dirs = [[-1,-1],[-1,1],[1,-1],[1,1]];
-    if(isKing){
-      for(const [dr,dc] of dirs){
-        let i=r+dr, j=c+dc;
-        while(inB(i,j) && !board[i][j]){
-          normals.push({from:[r,c], to:[i,j], captured:null});
-          i+=dr; j+=dc;
-        }
-      }
-    } else {
-      const fwd = color === 'w' ? -1 : 1;
-      for(const dc of [-1,1]){
-        const i=r+fwd, j=c+dc;
-        if(inB(i,j) && !board[i][j]) normals.push({from:[r,c], to:[i,j], captured:null});
-      }
-    }
-  }
-  return caps.length ? caps : normals;
-}
-
-function computeLegalMoves(s){
-  if(s.chainFrom){
-    return getCapturesForPiece(s.board, s.chainFrom[0], s.chainFrom[1]);
-  }
-  return getAllMoves(s.board, s.turn);
-}
-
-function applyMoveToBoard(board, mv){
-  const nb = board.map(row => [...row]);
-  const [fr,fc] = mv.from;
-  const [tr,tc] = mv.to;
-  const piece = nb[fr][fc];
-  nb[fr][fc] = null;
-  if(mv.captured) nb[mv.captured[0]][mv.captured[1]] = null;
-  nb[tr][tc] = piece;
-  if(piece === 'w' && tr === 0) nb[tr][tc] = 'W';
-  if(piece === 'b' && tr === 7) nb[tr][tc] = 'B';
-  return nb;
-}
-
-function countPieces(board, color){
-  let n = 0;
-  for(let r=0;r<8;r++) for(let c=0;c<8;c++){
-    const p = board[r][c];
-    if(p && p.toLowerCase() === color) n++;
-  }
-  return n;
-}
-
-function makeCheckersMove(from, to){
-  updateState(s => {
-    if(s.winner) return;
-    const myColor = mySeat === 'p0' ? 'w' : 'b';
-    if(s.turn !== myColor) return;
-
-    const moves = computeLegalMoves(s);
-    const mv = moves.find(m =>
-      m.from[0] === from[0] && m.from[1] === from[1] &&
-      m.to[0] === to[0] && m.to[1] === to[1]
-    );
-    if(!mv) return;
-
-    const nb = applyMoveToBoard(s.board, mv);
-    s.board = nb;
-    s.lastMove = { from: mv.from, to: mv.to };
-
-    let chain = null;
-    if(mv.captured){
-      const cont = getCapturesForPiece(nb, to[0], to[1]);
-      if(cont.length) chain = [to[0], to[1]];
-    }
-
-    const oppColor = myColor === 'w' ? 'b' : 'w';
-
-    if(chain){
-      s.chainFrom = chain;
-      s.log = `${nameOf(mySeat)} продолжает бить`;
-      return s;
-    }
-
-    s.chainFrom = null;
-    s.turn = oppColor;
-    s.log = `${nameOf(mySeat)} сделал ход`;
-
-    const oppPieces = countPieces(nb, oppColor);
-    const oppMoves = oppPieces ? getAllMoves(nb, oppColor) : [];
-    if(oppPieces === 0 || oppMoves.length === 0){
-      s.winner = myColor;
-      s.log = `${nameOf(mySeat)} победил! 🎉`;
-    }
-    return s;
-  });
-}
-
-function renderCheckers(){
-  const s = room.state;
-  const myColor = mySeat === 'p0' ? 'w' : 'b';
-  const flip = myColor === 'b';
-  const myTurn = s.turn === myColor && !s.winner;
-  const legal = (myTurn) ? computeLegalMoves(s) : [];
-
-  const targets = new Set();
-  if(sel){
-    legal.filter(m => m.from[0]===sel[0] && m.from[1]===sel[1])
-         .forEach(m => targets.add(m.to[0]+','+m.to[1]));
-  }
-
-  const st = $('#status');
-  if(s.winner){
-    const winnerSeat = s.winner === myColor ? mySeat : (mySeat === 'p0' ? 'p1' : 'p0');
-    st.innerHTML = `<b>${nameOf(winnerSeat)} победил! 🎉</b>`;
-  } else {
-    const turnSeat = (s.turn === 'w') === (mySeat === 'p0') ? mySeat : (mySeat === 'p0' ? 'p1' : 'p0');
-    st.innerHTML = myTurn
-      ? `<span class="you">Ваш ход${s.chainFrom ? ' — продолжайте бить' : ''}</span>`
-      : `Ход: <b>${nameOf(turnSeat)}</b>`;
-  }
-
-  let cells = '';
-  for(let i=0;i<8;i++){
-    for(let j=0;j<8;j++){
-      const r = flip ? 7-i : i;
-      const c = flip ? 7-j : j;
-      const dark = (r+c)%2 === 1;
-      const p = s.board[r][c];
-      const isSel = sel && sel[0]===r && sel[1]===c;
-      const isTarget = targets.has(r+','+c);
-      const isCap = isTarget && legal.some(m =>
-        sel && m.from[0]===sel[0] && m.from[1]===sel[1] &&
-        m.to[0]===r && m.to[1]===c && m.captured
-      );
-      const isLast = lastMove && (
-        (lastMove.from[0]===r && lastMove.from[1]===c) ||
-        (lastMove.to[0]===r && lastMove.to[1]===c)
-      );
-
-      let pc = '';
-      if(p){
-        const king = p === p.toUpperCase();
-        pc = `<div class="pc ${p.toLowerCase()}${king?' king':''}"></div>`;
-      }
-      cells += `<div class="sq ${dark?'dark':'light'}${isSel?' sel':''}${isTarget?' target'+(isCap?' cap':''):''}${isLast?' lastmove':''}"
-        data-r="${r}" data-c="${c}">${pc}</div>`;
-    }
-  }
-  $('#boardArea').innerHTML = `<div class="board-wrap"><div class="board">${cells}</div></div>`;
-  $('#handArea').innerHTML = `<div class="banner">${s.log || ''}</div>`;
-
-  const act = $('#actionArea');
-  act.innerHTML = '';
-  if(s.winner){
-    const b = document.createElement('button');
-    b.textContent = 'Выйти'; b.onclick = leaveRoom;
-    act.appendChild(b);
-  }
-
-  $('#boardArea').querySelectorAll('.sq').forEach(el => {
-    el.onclick = () => {
-      if(!myTurn) return;
-      const r = +el.dataset.r, c = +el.dataset.c;
-      const p = s.board[r][c];
-
-      if(sel){
-        const ok = legal.find(m =>
-          m.from[0]===sel[0] && m.from[1]===sel[1] &&
-          m.to[0]===r && m.to[1]===c
-        );
-        if(ok){
-          lastMove = { from: [...sel], to: [r,c] };
-          sel = null;
-          makeCheckersMove(ok.from, ok.to);
-          return;
-        }
-      }
-      if(p && p.toLowerCase() === myColor){
-        const has = legal.some(m => m.from[0]===r && m.from[1]===c);
-        sel = has ? [r,c] : null;
-        if(!has) toast(s.chainFrom ? 'Продолжайте бить этой шашкой' : 'У этой шашки нет ходов');
-        renderCheckers();
-        return;
-      }
-      sel = null;
-      renderCheckers();
-    };
-  });
-}
-
-/* ============================================================
-   Инициализация UI
-   ============================================================ */
-$('#codeInput').addEventListener('input', e => {
-  e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g,'');
-});
-</script>
-</body>
-</html>
+      s.log = `${nameOf(mySeat)} взя
