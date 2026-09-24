@@ -622,4 +622,445 @@ function drawUnoCard(){
       s.hasDrawn = false;
       s.drawnCardId = null;
       s.turn = mySeat === 'p0' ? 'p1' : 'p0';
-      s.log = `${nameOf(mySeat)} взя
+      s.log = `${nameOf(mySeat)} взял карту и пропустил ход`;
+    }
+    return s;
+  });
+}
+
+/* Пропустить после взятия */
+function passUno(){
+  updateState(s => {
+    if(s.winner) return;
+    if(s.turn !== mySeat) return;
+    if(!s.hasDrawn) return;
+    s.hasDrawn = false; s.drawnCardId = null;
+    s.turn = mySeat === 'p0' ? 'p1' : 'p0';
+    s.log = `${nameOf(mySeat)} пропустил ход`;
+    return s;
+  });
+}
+
+function nameOf(seat){
+  if(!room?.players?.[seat]) return '—';
+  return room.players[seat].uid === myId ? 'Вы' : room.players[seat].name;
+}
+
+function renderUno(){
+  const s = room.state;
+  const myHand = s.hands[mySeat] || [];
+  const oppSeat = mySeat === 'p0' ? 'p1' : 'p0';
+  const oppHand = s.hands[oppSeat] || [];
+  const top = s.discard[s.discard.length-1] || {color:'wild', value:'wild'};
+  const myTurn = s.turn === mySeat && !s.winner;
+
+  const st = $('#status');
+  if(s.winner){
+    st.innerHTML = `<b>${nameOf(s.winner)} победил! 🎉</b>`;
+  } else if(myTurn){
+    st.innerHTML = `<span class="you">Ваш ход${s.hasDrawn ? ' — сыграйте взятую или пропустите' : ''}</span>`;
+  } else {
+    st.innerHTML = `Ход: <b>${nameOf(s.turn)}</b>`;
+  }
+
+  // Карты соперника — с учётом большого количества
+  const oppCount = oppHand.length;
+  const overlap = oppCount > 12 ? -18 : -14;
+  const oppHtml = oppHand.map((_,i)=>
+    `<div class="cardback sm" style="margin-left:${i===0?0:overlap}px"></div>`
+  ).join('');
+
+  $('#boardArea').innerHTML = `
+    <div class="table">
+      <div class="opp-hand">${oppHtml}</div>
+      <div class="center-pile">
+        <div class="pile" id="deckPile">
+          <div class="cardback" style="width:76px;height:114px;border-radius:14px"></div>
+          <div class="label">Колода · ${s.deck.length}</div>
+        </div>
+        <div class="pile">
+          ${unoCardHTML(top, s.currentColor, true)}
+          <div class="label">Сброс</div>
+        </div>
+      </div>
+      <div class="banner ${myTurn?'':'warn'}" style="margin-top:4px">${s.log || ''}</div>
+    </div>
+  `;
+
+  $('#handArea').innerHTML = `<div class="hand">${myHand.map(c => {
+    const ok = myTurn && canPlayUno(c, top, s.currentColor) && (!s.hasDrawn || s.drawnCardId === c.id);
+    return unoCardHTML(c, s.currentColor, false, ok);
+  }).join('')}</div>`;
+
+  const act = $('#actionArea');
+  act.innerHTML = '';
+  if(myTurn && !s.hasDrawn){
+    const b = document.createElement('button');
+    b.textContent = 'Взять карту'; b.className = 'tonal'; b.onclick = drawUnoCard;
+    act.appendChild(b);
+  }
+  if(myTurn && s.hasDrawn){
+    const b = document.createElement('button');
+    b.textContent = 'Пропустить'; b.className = 'outline'; b.onclick = passUno;
+    act.appendChild(b);
+  }
+  if(s.winner){
+    const b = document.createElement('button');
+    b.textContent = 'Выйти'; b.onclick = leaveRoom;
+    act.appendChild(b);
+  }
+
+  $('#handArea').querySelectorAll('.uno-card.playable').forEach(el => {
+    el.onclick = () => {
+      const id = +el.dataset.id;
+      const card = myHand.find(c => c.id === id);
+      if(!card) return;
+      if(card.color === 'wild') showColorPicker(col => playUnoCard(id, col));
+      else playUnoCard(id);
+    };
+  });
+
+  const dp = $('#deckPile');
+  if(dp && myTurn && !s.hasDrawn){
+    dp.style.cursor='pointer';
+    dp.onclick = drawUnoCard;
+  }
+}
+
+function unoCardHTML(card, currentColor, isTop, playable){
+  if(!card) card = {id:-1, color:'wild', value:'wild'};
+  const cls = ['uno-card', card.color];
+  if(!isTop) cls.push(playable ? 'playable' : 'dim');
+  const label = unoLabel(card.value);
+  const isWild = card.color === 'wild';
+  const dot = (isTop && isWild)
+    ? `<div class="color-dot" style="background:${
+        {red:'#C5504A',yellow:'#D9A400',green:'#4E8C6A',blue:'#4A7BB5'}[currentColor] || '#888'
+      }"></div>`
+    : '';
+  return `<div class="${cls.join(' ')}" data-id="${card.id}">
+    ${dot}
+    <span class="tl">${isWild ? '★' : label}</span>
+    <span class="mid">${label}</span>
+    <span class="br">${isWild ? '★' : label}</span>
+  </div>`;
+}
+
+function showColorPicker(cb){
+  const wrap = document.createElement('div');
+  wrap.className = 'color-picker';
+  wrap.innerHTML = `
+    <div class="box">
+      <h2>Выберите цвет</h2>
+      <div class="grid">
+        <button class="sw" style="background:#C5504A" data-c="red"></button>
+        <button class="sw" style="background:#D9A400" data-c="yellow"></button>
+        <button class="sw" style="background:#4E8C6A" data-c="green"></button>
+        <button class="sw" style="background:#4A7BB5" data-c="blue"></button>
+      </div>
+    </div>`;
+  document.body.appendChild(wrap);
+  wrap.querySelectorAll('.sw').forEach(b => {
+    b.onclick = () => { wrap.remove(); cb(b.dataset.c); };
+  });
+  wrap.onclick = e => { if(e.target === wrap) wrap.remove(); };
+}
+
+/* ============================================================
+   ШАШКИ (русские: бой обязателен, назад бить можно, дамка ходит на любое расстояние)
+   ============================================================ */
+const inB = (r,c) => r>=0 && r<8 && c>=0 && c<8;
+
+function makeCheckersState(){
+  const board = Array.from({length:8}, () => Array(8).fill(null));
+  for(let r=0;r<8;r++) for(let c=0;c<8;c++){
+    if((r+c)%2 === 1){
+      if(r < 3) board[r][c] = 'b';
+      else if(r > 4) board[r][c] = 'w';
+    }
+  }
+  return {
+    board,
+    turn: 'w',
+    chainFrom: null,
+    winner: null,
+    lastMove: null,
+    log: 'Белые начинают. Бой обязателен!'
+  };
+}
+
+function getCapturesForPiece(board, r, c){
+  const piece = board[r][c];
+  if(!piece) return [];
+  const color = piece.toLowerCase();
+  const isKing = piece === piece.toUpperCase();
+  const res = [];
+  const dirs = [[-1,-1],[-1,1],[1,-1],[1,1]];
+
+  for(const [dr,dc] of dirs){
+    if(isKing){
+      // дамка: идём до первой фигуры
+      let i = r+dr, j = c+dc;
+      while(inB(i,j) && !board[i][j]){ i+=dr; j+=dc; }
+      if(!inB(i,j)) continue;
+      if(board[i][j].toLowerCase() === color) continue;
+      // фигура соперника — приземлиться можно на любую клетку за ней
+      let li = i+dr, lj = j+dc;
+      while(inB(li,lj) && !board[li][lj]){
+        res.push({from:[r,c], to:[li,lj], captured:[i,j]});
+        li+=dr; lj+=dc;
+      }
+    } else {
+      const i = r+dr, j = c+dc;
+      const li = r+2*dr, lj = c+2*dc;
+      if(inB(i,j) && inB(li,lj) &&
+         board[i][j] && board[i][j].toLowerCase() !== color &&
+         !board[li][lj]){
+        res.push({from:[r,c], to:[li,lj], captured:[i,j]});
+      }
+    }
+  }
+  return res;
+}
+
+function getAllMoves(board, color){
+  const caps = [], normals = [];
+  for(let r=0;r<8;r++) for(let c=0;c<8;c++){
+    const p = board[r][c];
+    if(!p || p.toLowerCase() !== color) continue;
+    const cs = getCapturesForPiece(board, r, c);
+    if(cs.length){ caps.push(...cs); continue; }
+
+    const isKing = p === p.toUpperCase();
+    const dirs = [[-1,-1],[-1,1],[1,-1],[1,1]];
+    if(isKing){
+      for(const [dr,dc] of dirs){
+        let i=r+dr, j=c+dc;
+        while(inB(i,j) && !board[i][j]){
+          normals.push({from:[r,c], to:[i,j], captured:null});
+          i+=dr; j+=dc;
+        }
+      }
+    } else {
+      const fwd = color === 'w' ? -1 : 1;
+      for(const dc of [-1,1]){
+        const i=r+fwd, j=c+dc;
+        if(inB(i,j) && !board[i][j]){
+          normals.push({from:[r,c], to:[i,j], captured:null});
+        }
+      }
+    }
+  }
+  return caps.length ? caps : normals;
+}
+
+function computeLegalMoves(s){
+  if(s.chainFrom){
+    return getCapturesForPiece(s.board, s.chainFrom[0], s.chainFrom[1]);
+  }
+  return getAllMoves(s.board, s.turn);
+}
+
+function applyMoveToBoard(board, mv){
+  const nb = board.map(row => [...row]);
+  const [fr,fc] = mv.from;
+  const [tr,tc] = mv.to;
+  const piece = nb[fr][fc];
+  nb[fr][fc] = null;
+  if(mv.captured) nb[mv.captured[0]][mv.captured[1]] = null;
+  nb[tr][tc] = piece;
+  if(piece === 'w' && tr === 0) nb[tr][tc] = 'W';
+  if(piece === 'b' && tr === 7) nb[tr][tc] = 'B';
+  return nb;
+}
+
+function countPieces(board, color){
+  let n = 0;
+  for(let r=0;r<8;r++) for(let c=0;c<8;c++){
+    const p = board[r][c];
+    if(p && p.toLowerCase() === color) n++;
+  }
+  return n;
+}
+
+function makeCheckersMove(from, to){
+  updateState(s => {
+    if(s.winner) return;
+    const myColor = mySeat === 'p0' ? 'w' : 'b';
+    if(s.turn !== myColor) return;
+
+    const moves = computeLegalMoves(s);
+    const mv = moves.find(m =>
+      m.from[0] === from[0] && m.from[1] === from[1] &&
+      m.to[0] === to[0] && m.to[1] === to[1]
+    );
+    if(!mv) return;
+
+    const nb = applyMoveToBoard(s.board, mv);
+    s.board = nb;
+    s.lastMove = { from: mv.from, to: mv.to };
+
+    // Продолжение цепочки?
+    let chain = null;
+    if(mv.captured){
+      const cont = getCapturesForPiece(nb, to[0], to[1]);
+      if(cont.length) chain = [to[0], to[1]];
+    }
+
+    const oppColor = myColor === 'w' ? 'b' : 'w';
+
+    if(chain){
+      s.chainFrom = chain;
+      s.log = `${nameOf(mySeat)} продолжает бить`;
+      return s;
+    }
+
+    s.chainFrom = null;
+    s.turn = oppColor;
+
+    // Проверка конца игры
+    const oppPieces = countPieces(nb, oppColor);
+    const oppMoves = oppPieces ? getAllMoves(nb, oppColor) : [];
+    if(oppPieces === 0 || oppMoves.length === 0){
+      s.winner = myColor;
+      s.log = `${nameOf(mySeat)} победил! 🎉`;
+    } else {
+      s.log = `${nameOf(mySeat)} сделал ход`;
+    }
+    return s;
+  });
+}
+
+function renderCheckers(){
+  const s = room.state;
+  const myColor = mySeat === 'p0' ? 'w' : 'b';
+  const flip = myColor === 'b';
+  const myTurn = s.turn === myColor && !s.winner;
+  const legal = myTurn ? computeLegalMoves(s) : [];
+
+  // Автовыделение фигуры, продолжающей бой
+  if(myTurn && s.chainFrom){
+    sel = [s.chainFrom[0], s.chainFrom[1]];
+  }
+
+  const targets = new Set();
+  if(sel){
+    legal.filter(m => m.from[0]===sel[0] && m.from[1]===sel[1])
+         .forEach(m => targets.add(m.to[0]+','+m.to[1]));
+  }
+
+  const st = $('#status');
+  if(s.winner){
+    const winnerSeat = s.winner === myColor ? mySeat : (mySeat === 'p0' ? 'p1' : 'p0');
+    st.innerHTML = `<b>${nameOf(winnerSeat)} победил! 🎉</b>`;
+  } else {
+    const turnSeat = (s.turn === 'w') === (mySeat === 'p0') ? mySeat : (mySeat === 'p0' ? 'p1' : 'p0');
+    st.innerHTML = myTurn
+      ? `<span class="you">Ваш ход${s.chainFrom ? ' — продолжайте бить' : ''}</span>`
+      : `Ход: <b>${nameOf(turnSeat)}</b>`;
+  }
+
+  let cells = '';
+  for(let i=0;i<8;i++){
+    for(let j=0;j<8;j++){
+      const r = flip ? 7-i : i;
+      const c = flip ? 7-j : j;
+      const dark = (r+c)%2 === 1;
+      const p = s.board[r][c];
+      const isSel = sel && sel[0]===r && sel[1]===c;
+      const isChain = s.chainFrom && s.chainFrom[0]===r && s.chainFrom[1]===c;
+      const isTarget = targets.has(r+','+c);
+      const isCap = isTarget && sel && legal.some(m =>
+        m.from[0]===sel[0] && m.from[1]===sel[1] &&
+        m.to[0]===r && m.to[1]===c && m.captured
+      );
+      const isLast = lastMove && (
+        (lastMove.from[0]===r && lastMove.from[1]===c) ||
+        (lastMove.to[0]===r && lastMove.to[1]===c)
+      );
+
+      let pc = '';
+      if(p){
+        const king = p === p.toUpperCase();
+        pc = `<div class="pc ${p.toLowerCase()}${king?' king':''}"></div>`;
+      }
+      cells += `<div class="sq ${dark?'dark':'light'}${isSel?' sel':''}${isChain?' chain':''}${isTarget?' target'+(isCap?' cap':''):''}${isLast?' lastmove':''}"
+        data-r="${r}" data-c="${c}">${pc}</div>`;
+    }
+  }
+  $('#boardArea').innerHTML = `<div class="board-wrap"><div class="board">${cells}</div></div>`;
+  $('#handArea').innerHTML = `<div class="banner">${s.log || ''}</div>`;
+
+  const act = $('#actionArea');
+  act.innerHTML = '';
+  if(s.winner){
+    const b = document.createElement('button');
+    b.textContent = 'Выйти'; b.onclick = leaveRoom;
+    act.appendChild(b);
+  }
+
+  $('#boardArea').querySelectorAll('.sq').forEach(el => {
+    el.onclick = () => {
+      if(!myTurn) return;
+      const r = +el.dataset.r, c = +el.dataset.c;
+      const p = s.board[r][c];
+
+      // если есть цепочка — ходить можно только этой фигурой
+      if(s.chainFrom){
+        const cr = s.chainFrom[0], cc = s.chainFrom[1];
+        if(r === cr && c === cc){
+          sel = [r,c]; renderCheckers(); return;
+        }
+        const ok = legal.find(m =>
+          m.from[0]===cr && m.from[1]===cc &&
+          m.to[0]===r && m.to[1]===c
+        );
+        if(ok){
+          lastMove = { from: [...ok.from], to: [r,c] };
+          sel = null;
+          makeCheckersMove(ok.from, ok.to);
+          return;
+        }
+        toast('Продолжайте бить выделенной шашкой');
+        return;
+      }
+
+      // обычный ход
+      if(sel){
+        const ok = legal.find(m =>
+          m.from[0]===sel[0] && m.from[1]===sel[1] &&
+          m.to[0]===r && m.to[1]===c
+        );
+        if(ok){
+          lastMove = { from: [...sel], to: [r,c] };
+          sel = null;
+          makeCheckersMove(ok.from, ok.to);
+          return;
+        }
+      }
+      if(p && p.toLowerCase() === myColor){
+        const has = legal.some(m => m.from[0]===r && m.from[1]===c);
+        if(has){
+          sel = [r,c];
+        } else {
+          sel = null;
+          toast('У этой шашки нет ходов');
+        }
+        renderCheckers();
+        return;
+      }
+      sel = null;
+      renderCheckers();
+    };
+  });
+}
+
+/* ============================================================
+   UI init
+   ============================================================ */
+$('#codeInput').addEventListener('input', e => {
+  e.target.value = e.target.value.toUpperCase().replace(/[^A-Z0-9]/g,'');
+});
+</script>
+</body>
+</html>
